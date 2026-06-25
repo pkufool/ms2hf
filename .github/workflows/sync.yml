@@ -1,0 +1,190 @@
+name: 同步 ModelScope / Hugging Face
+
+on:
+  workflow_dispatch:
+    inputs:
+      direction:
+        description: "同步方向"
+        required: true
+        type: choice
+        options:
+          - ms2hf
+          - hf2ms
+        default: ms2hf
+      repo_type:
+        description: "仓库类型"
+        required: true
+        type: choice
+        options:
+          - model
+          - dataset
+        default: model
+      source_repo:
+        description: "源仓库 ID，例如 k2-fsa/OpenDialog"
+        required: true
+        type: string
+      target_repo:
+        description: "目标仓库 ID，例如 your-name/OpenDialog"
+        required: true
+        type: string
+      source_revision:
+        description: "源 revision，可留空使用平台默认值"
+        required: false
+        type: string
+      target_revision:
+        description: "目标 revision，可留空；目标为 ModelScope 时可能不生效"
+        required: false
+        type: string
+      include_regex:
+        description: "只同步匹配该正则的文件；多个正则用换行分隔；留空表示不过滤"
+        required: false
+        type: string
+      exclude_regex:
+        description: "排除匹配该正则的文件/目录；多个正则用换行分隔；留空表示不排除"
+        required: false
+        type: string
+      workers:
+        description: "并发文件数；磁盘空间有限时建议 1"
+        required: true
+        type: string
+        default: "1"
+      max_retries:
+        description: "每个下载/上传步骤的最大重试次数"
+        required: true
+        type: string
+        default: "3"
+      retry_sleep:
+        description: "两次重试之间等待的秒数"
+        required: true
+        type: string
+        default: "10"
+      force:
+        description: "是否强制重新上传目标已存在的同路径文件"
+        required: true
+        type: boolean
+        default: false
+      create_target:
+        description: "是否尝试自动创建目标仓库"
+        required: true
+        type: boolean
+        default: false
+      private:
+        description: "配合 create_target 使用，是否创建私有仓库"
+        required: true
+        type: boolean
+        default: false
+      dry_run:
+        description: "是否只预览，不实际下载/上传"
+        required: true
+        type: boolean
+        default: false
+      keep_local:
+        description: "上传后是否保留本地临时文件（通常不建议）"
+        required: true
+        type: boolean
+        default: false
+      hf_token:
+        description: "Hugging Face token（注意：更推荐使用仓库 Secrets；此输入会被日志 mask，但仍应谨慎使用）"
+        required: false
+        type: string
+      ms_token:
+        description: "ModelScope token（注意：更推荐使用仓库 Secrets；此输入会被日志 mask，但仍应谨慎使用）"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: 执行同步
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      # 推荐做法：在 GitHub 仓库 Settings -> Secrets and variables -> Actions 中配置
+      # HF_TOKEN 和 MS_TOKEN。网页端输入的 token 仅作为没有配置 Secret 时的兜底。
+      HF_TOKEN: ${{ inputs.hf_token || secrets.HF_TOKEN }}
+      MS_TOKEN: ${{ inputs.ms_token || secrets.MS_TOKEN }}
+      WORK_DIR: ${{ runner.temp }}/ms2hf-work
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 屏蔽网页端输入的 token
+        shell: bash
+        run: |
+          if [ -n "${HF_TOKEN}" ]; then echo "::add-mask::${HF_TOKEN}"; fi
+          if [ -n "${MS_TOKEN}" ]; then echo "::add-mask::${MS_TOKEN}"; fi
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+          cache: pip
+
+      - name: 安装 ms2hf
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: 显示同步配置摘要
+        shell: bash
+        run: |
+          echo "同步方向: ${{ inputs.direction }}"
+          echo "仓库类型: ${{ inputs.repo_type }}"
+          echo "源仓库:   ${{ inputs.source_repo }}"
+          echo "目标仓库: ${{ inputs.target_repo }}"
+          echo "workers:  ${{ inputs.workers }}"
+          echo "force:    ${{ inputs.force }}"
+          echo "dry_run:  ${{ inputs.dry_run }}"
+          echo "work_dir: ${WORK_DIR}"
+
+      - name: 执行同步
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${WORK_DIR}"
+
+          cmd=("${{ inputs.direction }}" "${{ inputs.source_repo }}" "${{ inputs.target_repo }}")
+          cmd+=(--repo-type "${{ inputs.repo_type }}")
+          cmd+=(--work-dir "${WORK_DIR}")
+          cmd+=(--workers "${{ inputs.workers }}")
+          cmd+=(--max-retries "${{ inputs.max_retries }}")
+          cmd+=(--retry-sleep "${{ inputs.retry_sleep }}")
+
+          if [ -n "${{ inputs.source_revision }}" ]; then
+            cmd+=(--source-revision "${{ inputs.source_revision }}")
+          fi
+          if [ -n "${{ inputs.target_revision }}" ]; then
+            cmd+=(--target-revision "${{ inputs.target_revision }}")
+          fi
+
+          while IFS= read -r pattern; do
+            if [ -n "${pattern}" ]; then
+              cmd+=(--include-regex "${pattern}")
+            fi
+          done <<< "${{ inputs.include_regex }}"
+
+          while IFS= read -r pattern; do
+            if [ -n "${pattern}" ]; then
+              cmd+=(--exclude-regex "${pattern}")
+            fi
+          done <<< "${{ inputs.exclude_regex }}"
+
+          if [ "${{ inputs.force }}" = "true" ]; then
+            cmd+=(--force)
+          fi
+          if [ "${{ inputs.create_target }}" = "true" ]; then
+            cmd+=(--create-target)
+          fi
+          if [ "${{ inputs.private }}" = "true" ]; then
+            cmd+=(--private)
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            cmd+=(--dry-run)
+          fi
+          if [ "${{ inputs.keep_local }}" = "true" ]; then
+            cmd+=(--keep-local)
+          fi
+
+          "${cmd[@]}"

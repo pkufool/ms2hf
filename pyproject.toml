@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ms2hf"
+version = "0.1.0"
+description = "Sync models and datasets between ModelScope and Hugging Face one file at a time."
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "Apache-2.0"}
+authors = [{name = "pkufool"}]
+keywords = ["modelscope", "huggingface", "sync", "models", "datasets"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Version Control :: Git",
+]
+dependencies = [
+  "huggingface_hub>=0.20.0",
+  "modelscope>=1.9.0",
+  "tqdm>=4.64.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/pkufool/ms2hf"
+Issues = "https://github.com/pkufool/ms2hf/issues"
+
+[project.scripts]
+ms2hf = "ms2hf:main_ms2hf"
+hf2ms = "ms2hf:main_hf2ms"
+
+[tool.setuptools]
+py-modules = ["ms2hf"]
