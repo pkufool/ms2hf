@@ -38,8 +38,6 @@
 
 ### 从 PyPI 安装
 
-项目发布到 PyPI 后，可以直接安装：
-
 ```bash
 pip install ms2hf
 ```
@@ -366,7 +364,7 @@ Actions -> Publish to PyPI -> Run workflow
 - 执行 `twine check`；
 - 使用 `twine upload` 发布到 PyPI。
 
-发布使用 PyPI API Token，不使用 Trusted Publisher。请先在 GitHub 仓库 Secrets 中配置：
+发布使用 PyPI API Token。请先在 GitHub 仓库 Secrets 中配置：
 
 ```text
 Settings -> Secrets and variables -> Actions -> New repository secret
