@@ -129,6 +129,31 @@ def _coerce_size(value: object) -> Optional[int]:
         return None
 
 
+def _to_file_items(entries: Iterable[dict]) -> List[FileItem]:
+    """Convert raw ModelScope tree entries to file items, dropping directories.
+
+    ModelScope tree listings include directory entries (``Type='tree'`` or
+    git mode ``16384``). Some SDK versions omit these markers, so as a final
+    safeguard any path that is a parent directory of another listed path is
+    also dropped. Downloading a directory entry fails with a confusing 404.
+    """
+
+    kept: List[FileItem] = []
+    for f in entries:
+        path = f.get("Path")
+        if not path:
+            continue
+        if f.get("Type") == "tree" or str(f.get("Mode")) == "16384":
+            continue
+        kept.append(FileItem(path=path, size=_coerce_size(f.get("Size") or f.get("size"))))
+    paths = {item.path for item in kept}
+    return [
+        item
+        for item in kept
+        if not any(other.startswith(item.path + "/") for other in paths)
+    ]
+
+
 class HuggingFaceBackend:
     """Hugging Face platform adapter.
 
@@ -139,7 +164,27 @@ class HuggingFaceBackend:
     def __init__(self, token: Optional[str] = None):
         from huggingface_hub import HfApi
 
+        if not token:
+            # Fall back to the token cached by `huggingface-cli login` so that
+            # an authenticated upload does not silently degrade to anonymous.
+            try:
+                from huggingface_hub import get_token
+
+                token = get_token()
+            except Exception:  # noqa: BLE001 - very old huggingface_hub versions.
+                try:
+                    from huggingface_hub import HfFolder
+
+                    token = HfFolder.get_token()
+                except Exception:  # noqa: BLE001
+                    token = None
         self.token = token
+        if not token:
+            print(
+                "WARNING: no Hugging Face token found (set --hf-token, HF_TOKEN, "
+                "or run `huggingface-cli login`). Uploads will fail with 401.",
+                file=sys.stderr,
+            )
         self.api = HfApi(token=token)
 
     def list_files(self, repo_id: str, repo_type: str, revision: Optional[str]) -> List[FileItem]:
@@ -226,11 +271,7 @@ class ModelScopeBackend:
                 recursive=True,
                 use_cookies=bool(self.token),
             )
-            return [
-                FileItem(path=f["Path"], size=_coerce_size(f.get("Size") or f.get("size")))
-                for f in files
-                if f.get("Type") != "tree" and f.get("Path")
-            ]
+            return _to_file_items(files)
 
         # ModelScope dataset repository trees are paginated.
         namespace, name = _split_namespace_name(repo_id)
@@ -249,11 +290,7 @@ class ModelScopeBackend:
             )
             data = response.get("Data") or {}
             files = data.get("Files") or []
-            out.extend(
-                FileItem(path=f["Path"], size=_coerce_size(f.get("Size") or f.get("size")))
-                for f in files
-                if f.get("Type") != "tree" and f.get("Path")
-            )
+            out.extend(_to_file_items(files))
             if len(files) < page_size:
                 break
             page_number += 1
